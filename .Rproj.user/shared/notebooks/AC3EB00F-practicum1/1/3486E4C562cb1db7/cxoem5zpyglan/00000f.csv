@@ -1,0 +1,7 @@
+"0","### REMOVE SUBSAMPLING FOR FINAL MODEL"
+"0","data.prep <- raw.data %>% select(-AppointmentID, -PatientID) %>% sample_n(10000)"
+"0",""
+"0","set.seed(42)"
+"0","data.split <- initial_split(data.prep, prop = 0.7)"
+"0","train  <- training(data.split)"
+"0","test <- testing(data.split)"
