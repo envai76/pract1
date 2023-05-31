@@ -1,0 +1,7 @@
+"0","### REMOVE SUBSAMPLING FOR FINAL MODEL"
+"0","data.prep <- raw.data %>% select(-AppointmentID, -PatientID) #%>% sample_n(10000)"
+"0",""
+"0","set.seed(423)"
+"0",""
+"0","cv_folds <- createFolds(data.prep$NoShow, k = 5, returnTrain = TRUE)"
+"0",""

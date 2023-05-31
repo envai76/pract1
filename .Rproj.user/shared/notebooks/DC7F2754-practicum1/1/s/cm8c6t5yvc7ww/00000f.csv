@@ -1,2 +1,0 @@
-"0","age_under_110 <- raw.data %>% filter(Age > 110)"
-"0","print(age_under_110)"
