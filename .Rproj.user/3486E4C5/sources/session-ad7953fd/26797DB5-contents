@@ -1,0 +1,554 @@
+---
+title: "practicum_1"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-05-19"
+---
+
+## loading the libraries
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(CatEncoders)
+library(readr)          # Data Input
+library(tidymodels)     # Data Manipulation
+library(lubridate)      # Data Manupulation
+library(dplyr)          # Data Manipulation
+library(reshape2)       # Data Manipulation
+library(caTools)        # Data Manipulation
+library(corrplot)       # Data Visualisation
+library(ggplot2)        # Data Visualization
+library(viridis)        # Data Visualization
+library(ggthemes)       # Data Visualization
+library(pROC)           # Metrics
+library(caret)          # Machine Learning
+library(xgboost)        # xgboost model
+```
+
+## Understanding the data
+
+**1.**showing the data dictionary :
+
+```{r}
+data <- read.delim(file = "data_dic.txt" ,  header = TRUE, sep = "\t", dec = ".")
+
+print(data)
+```
+
+**2.** Maybe the patient
+
+**3.** for example what type of medical appointment does each AppointmentID refer to?, how far is the patient address from the vitoria? , if the patient has any body to assist him or her?
+
+## Data Parsing and Cleaning
+
+**4.** we can download data separately and import it from the saved address (line 41) or download it by the command in line 42( reproducibility)
+
+```{r}
+raw.data <- readr::read_csv('https://maguire-lab.github.io/health_data_science_research_2023/static_files/practicals/lab1_data/2016_05v2_VitoriaAppointmentData.csv')
+
+print(raw.data)
+```
+
+checking if anybody is elder than 100 years or no?
+
+```{r}
+age_under_110 <- raw.data %>% filter(Age > 110)
+print(age_under_110)
+age_under_110 <- age_under_110[!duplicated( age_under_110[c('PatientID')]),]
+print(age_under_110)
+
+```
+
+we can see that there are 2 person elder than 110.
+
+## Exploratory Data Analysis
+
+**5.** if the data contains a person with age under 0, so we can say that's impossible.
+
+```{r}
+raw.data %>% filter(Age<0)
+
+```
+
+as you can see we have one person under 0 age, so we should drop it from our data set. so I'm going to filter people with less than 0 age. in the below cell I'm going to check the data dimension before and after the filtering to see it has affected the data set or not.
+
+```{r}
+print(dim(raw.data))
+raw.data <- raw.data %>% filter(Age >= 0)
+print(dim(raw.data))
+```
+
+as its obvious just that one person is deleted.
+
+so lets check if we have anybody with age 0 ?
+
+```{r}
+age_0 <- raw.data %>% filter(Age == 0)
+
+age_0 <- age_0[!duplicated( age_0[c('PatientID')]),]
+print(dim(age_0))
+
+```
+
+so we see that we have 2082 users with age 0 in our data set and i think that may happen for example newborn babies. so I'm not going to drop them.
+
+but we are going to do some Exploratory on it. for example we wouldn't expect any of newborns to be diagnosed with Diabetes, Alcohol Use Disorder, and Hypertension. so we should check it in the data set too.
+
+```{r}
+raw.data %>% filter(Age == 0) %>% select(Hypertension, Diabetes, AlcoholUseDisorder) %>% unique()
+
+```
+
+We can also explore things like how many different neighborhoods are there and how many appoints are from each?
+
+```{r}
+count(raw.data, Neighbourhood, sort = TRUE)
+
+```
+
+**6 What is the maximum number of appointments from the same patient?**
+
+as i have deleted the anomaly duplicates, so my answer may differ from yours so by the way it's 88. but i can rerun it and generate it's solution for you by the real data before doing this operation.
+
+```{r}
+count(raw.data, PatientID, sort = TRUE)
+
+```
+
+i faced to a concern. and that's it, as we don't know whats the appointment for, if a person has more than one appointment in a day, it's a kind of duplicated data and i think they must be dropped out. so i would print the maximum appointment of a person also after deleting duplicates.
+
+```{r}
+raw.data <- raw.data [!duplicated( raw.data[c('PatientID','ScheduledDate')]),]
+
+print(dim(raw.data))
+count(raw.data, PatientID, sort = TRUE)
+
+```
+
+first let's replace non numeric values with some numeric values. so i would replacements would be as follow: for gender encoding:
+
+```{r}
+labs = LabelEncoder.fit(raw.data$Gender)
+
+#convert labels to numeric values
+raw.data$Gender = transform(labs, raw.data$Gender)
+```
+
+for Neighbourhood encoding:
+
+```{r}
+labs = LabelEncoder.fit(raw.data$Neighbourhood)
+
+#convert labels to numeric values
+raw.data$Neighbourhood = transform(labs, raw.data$Neighbourhood)
+```
+
+for NoShow encoding:
+
+```{r}
+labs = LabelEncoder.fit(raw.data$NoShow)
+
+#convert labels to numeric values
+raw.data$NoShow = transform(labs, raw.data$NoShow)
+```
+
+and after all checking the changes.
+
+```{r}
+print(raw.data)
+```
+
+Let's explore the correlation between variables:
+
+```{r}
+# let's define a plotting function
+corplot = function(df){
+  
+  cor_matrix_raw <- round(cor(df),2)
+  cor_matrix <- melt(cor_matrix_raw)
+  
+  
+  #Get triangle of the correlation matrix
+  #Lower Triangle
+  get_lower_tri<-function(cor_matrix_raw){
+    cor_matrix_raw[upper.tri(cor_matrix_raw)] <- NA
+    return(cor_matrix_raw)
+  }
+  
+  # Upper Triangle
+  get_upper_tri <- function(cor_matrix_raw){
+    cor_matrix_raw[lower.tri(cor_matrix_raw)]<- NA
+    return(cor_matrix_raw)
+  }
+  
+  upper_tri <- get_upper_tri(cor_matrix_raw)
+  
+  # Melt the correlation matrix
+  cor_matrix <- melt(upper_tri, na.rm = TRUE)
+  
+  # Heatmap Plot
+  cor_graph <- ggplot(data = cor_matrix, aes(Var2, Var1, fill = value))+
+    geom_tile(color = "white")+
+    scale_fill_gradient2(low = "darkorchid", high = "orangered", mid = "grey50", 
+                         midpoint = 0, limit = c(-1,1), space = "Lab", 
+                         name="Pearson\nCorrelation") +
+    theme_minimal()+ 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                     size = 8, hjust = 1))+
+    coord_fixed()+ geom_text(aes(Var2, Var1, label = value), color = "black", size = 2) +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank())+
+      ggtitle("Correlation Heatmap")+
+      theme(plot.title = element_text(hjust = 0.5))
+  
+  cor_graph
+}
+
+numeric.data = mutate_all(raw.data, function(x) as.numeric(x))
+
+# Plot Correlation Heatmap
+corplot(numeric.data)
+
+```
+
+**7.** column SMSReceived is most related one to NoShow.
+
+**8.** i would say the correlation by decending order as follow:
+
+1.PatientID and AppointmentID are most related columns as their value in correlation heat map is equal to 0.65.
+
+2.then AppointmentID and AppointmentDate are most correlated ones. also ScheduledDate and AppointmentDate are correlated with same corelation values(0.61).
+
+3.third rank would be for Hypertension and Age with correlation value 0.5.
+
+**9.** actually they are not carrying any important feature or information in themselves and they are just 2 ID columns. so their correlation don't make any help at the final predictions. because they are unique and they don't have any valuable information in themselves.
+
+Let's look at some individual variables and their relationship with NoShow.
+
+```{r}
+
+raw.data$NoShow = inverse.transform(labs, raw.data$NoShow)
+print(raw.data)
+```
+
+```{r}
+
+
+ggplot(raw.data) + 
+  geom_density(aes(x=Age, fill=NoShow), alpha=0.8) + 
+  ggtitle("Density of Age by Attendence")
+```
+
+Let's take a closer look at age by breaking it into categories.
+
+```{r}
+raw.data <- raw.data %>% mutate(Age.Range=cut_interval(Age, length=10))
+
+ggplot(raw.data) + 
+  geom_bar(aes(x=Age.Range, fill=NoShow)) + 
+  ggtitle("Amount of No Show across Age Ranges")
+```
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=Age.Range, fill=NoShow), position='fill') + 
+  ggtitle("Proportion of No Show across Age Ranges")
+```
+
+**10.** How could you be misled if you only plotted 1 of these 2 plots of attendance by age group? The key takeaway from this is that number of individuals \> 90 are very few from plot 1 so probably are very small so unlikely to make much of an impact on the overall distributions. However, other patterns do emerge such as 10-20 age group is nearly twice as likely to miss appointments as the 60-70 years old.
+
+```{r}
+raw.data %>% filter(Age == 0) %>% count()
+
+```
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=SMSReceived, fill=NoShow), alpha=0.8) + 
+  ggtitle("Density of SMS received across Age and No Show")
+
+ggplot(raw.data) + 
+  geom_bar(aes(x=SMSReceived, fill=NoShow), position='fill', alpha=0.8) + 
+  ggtitle("Density of SMS received across Age and No Show")
+```
+
+**11.**it seems that reviving a sms has increased the chance of some one not attending to the appointment. i think the portion of received messages are lower than not received and it shows in misled way that its in opposite way. but actually by taking a look at the first plot i think it says if they have not recived that sms but they attended. and in the small portion of recived ones in compare to not recived ones, it works opposit.
+
+**12.**
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=Disability, fill=NoShow), alpha=0.8) + 
+  ggtitle("Density of SMS received across Age and No Show")
+
+ggplot(raw.data) + 
+  geom_bar(aes(x=Disability, fill=NoShow), position='fill', alpha=0.8) + 
+  ggtitle("Density of Disability across Age and No Show")
+```
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=Neighbourhood, fill=NoShow)) + 
+  theme(axis.text.x = element_text(angle=45, hjust=1, size=5)) + 
+  ggtitle('Attendance by Neighbourhood')
+
+ggplot(raw.data) + 
+  geom_bar(aes(x=Neighbourhood, fill=NoShow), position='fill') + 
+  theme(axis.text.x = element_text(angle=45, hjust=1, size=5)) + 
+  ggtitle('Proportional Attendance by Neighbourhood')
+```
+
+**13.** it seems some of them are so far and this far distance may cause this noshow.
+
+Now let's explore the relationship between gender and NoShow.
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=Gender, fill=NoShow))
+  ggtitle("Gender by attendance")
+  
+ggplot(raw.data) + 
+  geom_bar(aes(x=Gender, fill=NoShow), position='fill')
+  ggtitle("Gender by attendance")
+
+```
+
+**14.**
+
+```{r}
+ggplot(raw.data) + 
+  geom_bar(aes(x=SocialWelfare, fill=NoShow))
+  ggtitle("Gender by attendance")
+  
+ggplot(raw.data) + 
+  geom_bar(aes(x=SocialWelfare, fill=NoShow), position='fill')
+  ggtitle("Gender by attendance")
+```
+
+## Feature Engineering
+
+Let's begin by seeing if appointments on any day of the week has more no-show's. Fortunately, the `lubridate` library makes this quite easy!
+
+```{r}
+raw.data <- raw.data %>% mutate(AppointmentDay = wday(AppointmentDate, label=TRUE, abbr=TRUE), 
+                                 ScheduledDay = wday(ScheduledDate,  label=TRUE, abbr=TRUE))
+
+ggplot(raw.data) +
+  geom_bar(aes(x=AppointmentDay, fill=NoShow)) +
+  ggtitle("Amount of No Show across Appointment Day") 
+
+ggplot(raw.data) +
+  geom_bar(aes(x=AppointmentDay, fill=NoShow), position = 'fill') +
+  ggtitle("Amount of No Show across Appointment Day") 
+
+```
+
+Let's begin by creating a variable called `Lag`, which is the difference between when an appointment was scheduled and the actual appointment.
+
+```{r, fig.align="center"}
+raw.data <- raw.data %>% mutate(Lag.days=difftime(AppointmentDate, ScheduledDate, units = "days"),
+                                Lag.hours=difftime(AppointmentDate, ScheduledDate, units = "hours"))
+
+ggplot(raw.data) + 
+  geom_density(aes(x=Lag.days, fill=NoShow), alpha=0.7)+
+  ggtitle("Density of Lag (days) by attendance")
+```
+
+**15** i thought that if the lag be a longer time, so the patient may have forgotten to attend but we see thay have attended. and i think may be the count of these late schecduled apointments are few.
+
+## Predictive Modeling
+
+Let's see how well we can predict NoShow from the data.
+
+We'll start by preparing the data, followed by splitting it into testing and training set, modeling and finally, evaluating our results. For now we will subsample but please run on full dataset for final execution.
+
+```{r}
+### REMOVE SUBSAMPLING FOR FINAL MODEL
+data.prep <- raw.data %>% select(-AppointmentID, -PatientID) #%>% sample_n(10000)
+
+set.seed(42)
+data.split <- initial_split(data.prep, prop = 0.7)
+train  <- training(data.split)
+test <- testing(data.split)
+```
+
+Let's now set the cross validation parameters, and add classProbs so we can use AUC as a metric for xgboost.
+
+```{r}
+fit.control <- trainControl(method="cv",number=3,
+                           classProbs = TRUE, summaryFunction = twoClassSummary)
+```
+
+**16** Based on the EDA, how well do you think this is going to work?
+
+Now we can train our XGBoost model
+
+```{r}
+xgb.grid <- expand.grid(eta=c(0.05),
+                       max_depth=c(4),colsample_bytree=1,
+                       subsample=1, nrounds=500, gamma=0, min_child_weight=5)
+
+xgb.model <- train(NoShow ~ .,data=train, method="xgbTree",metric="ROC",
+                  tuneGrid=xgb.grid, trControl=fit.control)
+
+xgb.pred <- predict(xgb.model, newdata=test)
+xgb.probs <- predict(xgb.model, newdata=test, type="prob")
+```
+
+```{r}
+test$NoShow<- as.factor(test$NoShow)
+```
+
+```{r}
+levels(xgb.pred)
+```
+
+```{r}
+test <- test %>% mutate(NoShow.numerical = ifelse(NoShow=="Yes",1,0))
+confusionMatrix(xgb.pred, test$NoShow, positive="Yes")
+paste("XGBoost Area under ROC Curve: ", round(auc(test$NoShow.numerical, xgb.probs[,2]),3), sep="")
+```
+
+This isn't an unreasonable performance, but let's look a bit more carefully at the correct and incorrect predictions,
+
+```{r ,fig.align="center"}
+xgb.probs$Actual = test$NoShow.numerical
+xgb.probs$ActualClass = test$NoShow
+xgb.probs$PredictedClass = xgb.pred
+xgb.probs$Match = ifelse(xgb.probs$ActualClass == xgb.probs$PredictedClass,
+                         "Correct","Incorrect")
+# [4.8] Plot Accuracy
+xgb.probs$Match = factor(xgb.probs$Match,levels=c("Incorrect","Correct"))
+ggplot(xgb.probs,aes(x=Yes,y=Actual,color=Match))+
+  geom_jitter(alpha=0.2,size=0.25)+
+  scale_color_manual(values=c("grey40","orangered"))+
+  ggtitle("Visualizing Model Performance", "(Dust Plot)")
+```
+
+Finally, let's close it off with the variable importance of our model:
+
+```{r,fig.align="center"}
+results = data.frame(Feature = rownames(varImp(xgb.model)$importance)[1:10],
+                     Importance = varImp(xgb.model)$importance[1:10,])
+
+results$Feature = factor(results$Feature,levels=results$Feature)
+
+
+# [4.10] Plot Variable Importance
+ggplot(results, aes(x=Feature, y=Importance,fill=Importance))+
+  geom_bar(stat="identity")+
+  scale_fill_gradient(low="grey20",high="orangered")+
+  ggtitle("XGBoost Variable Importance")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**17** Using the [caret package](https://topepo.github.io/caret/) fit and evaluate 1 other ML model on this data.
+
+## Random forest
+
+```{r}
+### REMOVE SUBSAMPLING FOR FINAL MODEL
+data.prep <- raw.data %>% select(-AppointmentID, -PatientID) #%>% sample_n(10000)
+
+set.seed(423)
+
+cv_folds <- createFolds(data.prep$NoShow, k = 5, returnTrain = TRUE)
+
+```
+
+```{r}
+tuneGrid <- expand.grid(.mtry = c(1 : 10))
+
+ctrl <- trainControl(method = "cv",
+                     number = 2,
+                     search = 'grid',
+                     classProbs = TRUE,
+                     savePredictions = "final",
+                     index = cv_folds,
+                     summaryFunction = twoClassSummary)
+```
+
+Now we can train our random forest model
+
+```{r}
+ntrees <- c(500, 1000)    
+nodesize <- c(1, 5)
+
+params <- expand.grid(ntrees = ntrees,
+                      nodesize = nodesize)
+store_maxnode <- vector("list", nrow(params))
+for(i in 1:nrow(params)){
+  nodesize <- params[i,2]
+  ntree <- params[i,1]
+  set.seed(65)
+  rf_model <- train(NoShow~.,
+                       data=data.prep,
+                       method = "rf",
+                       importance=TRUE,
+                       metric = "ROC",
+                       tuneGrid = tuneGrid,
+                       trControl = ctrl,
+                       ntree = ntree,
+                       nodesize = nodesize)
+  store_maxnode[[i]] <- rf_model
+}
+
+```
+
+```{r}
+
+rf.pred <- predict(rf_model, newdata=test)
+rf.probs <- predict(rf_model, newdata=test, type="prob")
+```
+
+```{r}
+names(store_maxnode) <- paste("ntrees:", params$ntrees,
+                              "nodesize:", params$nodesize)
+```
+
+```{r}
+test <- test %>% mutate(NoShow.numerical = ifelse(NoShow=="Yes",1,0))
+confusionMatrix(rf_model, test$NoShow, positive="Yes")
+paste("random forest Area under ROC Curve: ", round(auc(test$NoShow.numerical, xgb.probs[,2]),3), sep="")
+```
+
+This isn't an unreasonable performance, but let's look a bit more carefully at the correct and incorrect predictions,
+
+```{r ,fig.align="center"}
+xgb.probs$Actual = test$NoShow.numerical
+xgb.probs$ActualClass = test$NoShow
+xgb.probs$PredictedClass = xgb.pred
+xgb.probs$Match = ifelse(xgb.probs$ActualClass == xgb.probs$PredictedClass,
+                         "Correct","Incorrect")
+# [4.8] Plot Accuracy
+xgb.probs$Match = factor(xgb.probs$Match,levels=c("Incorrect","Correct"))
+ggplot(xgb.probs,aes(x=Yes,y=Actual,color=Match))+
+  geom_jitter(alpha=0.2,size=0.25)+
+  scale_color_manual(values=c("grey40","orangered"))+
+  ggtitle("Visualizing Model Performance", "(Dust Plot)")
+```
+
+Finally, let's close it off with the variable importance of our model:
+
+```{r,fig.align="center"}
+results = data.frame(Feature = rownames(varImp(xgb.model)$importance)[1:10],
+                     Importance = varImp(xgb.model)$importance[1:10,])
+
+results$Feature = factor(results$Feature,levels=results$Feature)
+
+
+# [4.10] Plot Variable Importance
+ggplot(results, aes(x=Feature, y=Importance,fill=Importance))+
+  geom_bar(stat="identity")+
+  scale_fill_gradient(low="grey20",high="orangered")+
+  ggtitle("XGBoost Variable Importance")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**18** Based on everything, do you think we can trust analyses based on this dataset? Explain your reasoning. actually the percision is not too high, so we can not trust with high level to this models.

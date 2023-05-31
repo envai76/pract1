@@ -1,0 +1,3 @@
+"0","data <- read.delim(file = ""C:/Users/Narges/Documents/practical_1/data_dic.txt"" ,  header = TRUE, sep = ""\t"", dec = ""."")"
+"0",""
+"0","print(data)"
